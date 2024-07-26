@@ -23,10 +23,10 @@ fn main() -> ! {
     let peripherals = Peripherals::take();
     let system = SystemControl::new(peripherals.SYSTEM);
     let clocks = ClockControl::boot_defaults(system.clock_control).freeze();
-    let mut delay = Delay::new(&clocks);
+    let delay = Delay::new(&clocks);
     let io = Io::new(peripherals.GPIO, peripherals.IO_MUX);
-    let slc = io.pins.gpio8;
-    let sda = io.pins.gpio10;
+    let slc = io.pins.gpio2;
+    let sda = io.pins.gpio3;
     let i2c = I2C::new(peripherals.I2C0, sda, slc, 100.kHz(), &clocks, None);
 
     let mut display: GraphicsMode<_> = Builder::new()
