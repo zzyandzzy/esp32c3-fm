@@ -14,9 +14,10 @@ pub async fn toggle_event(event_type: EventType, ms: u64) {
     println!("event_type:{:?} {}", event_type, ms);
 }
 
-pub async fn key_detection<P>(key: &Input<'static, P>, callback: fn(EventType))
+pub async fn key_detection<P, F>(key: &Input<'static, P>, mut callback: F)
 where
     P: InputPin,
+    F: FnMut(EventType) -> (),
 {
     let begin_ms = Instant::now().as_millis();
     let mut is_long = false;
@@ -35,10 +36,8 @@ where
                 if !is_long {
                     is_long = true;
                     callback(EventType::KeyLongStart);
-                    // toggle_event(EventType::KeyLongStart, current).await;
                 } else {
                     callback(EventType::KeyLongIng);
-                    // toggle_event(EventType::KeyLongIng, current).await;
                 }
             }
         } else if is_low_times < 2 {
@@ -46,13 +45,11 @@ where
             if is_long {
                 //长时间按下后释放
                 callback(EventType::KeyLongEnd);
-                // toggle_event(EventType::KeyLongEnd, current).await;
                 return;
             } else {
                 //短时按下，等几ms 看是否有下一次按下，如有则是双击
                 loop {
                     callback(EventType::KeyShort);
-                    // toggle_event(EventType::KeyShort, current).await;
                     return;
                 }
             }

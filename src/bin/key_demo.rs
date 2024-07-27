@@ -1,41 +1,99 @@
 #![no_std]
 #![no_main]
+extern crate alloc;
 
+use alloc::format;
 use embassy_executor::Spawner;
-use esp32c3_fm::event::key_detection;
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::channel::Channel;
+use embassy_time::{Duration, Timer};
+use embedded_graphics::mono_font::ascii::FONT_6X10;
+use embedded_graphics::mono_font::MonoTextStyleBuilder;
+use embedded_graphics::pixelcolor::BinaryColor;
+use embedded_graphics::prelude::Point;
+use embedded_graphics::text::{Baseline, Text};
+use embedded_graphics::Drawable;
+#[allow(unused)]
 use esp_backtrace as _;
 use esp_hal::gpio::{GpioPin, Input, Io, Pull};
+use esp_hal::i2c::I2C;
+use esp_hal::peripherals::I2C0;
 use esp_hal::timer::timg::TimerGroup;
 use esp_hal::timer::{ErasedTimer, OneShotTimer};
-use esp_hal::{clock::ClockControl, peripherals::Peripherals, prelude::*, system::SystemControl};
+use esp_hal::{
+    clock::ClockControl, peripherals::Peripherals, prelude::*, system::SystemControl, Blocking,
+};
 use esp_println::println;
+use ssd1306_i2c::{prelude::*, Builder};
 use static_cell::StaticCell;
 
+use esp32c3_fm::event::{key_detection, EventType};
+
 static ONE_SHOT_TIMER: StaticCell<[OneShotTimer<ErasedTimer>; 1]> = StaticCell::new();
+static CHANNEL: Channel<CriticalSectionRawMutex, (u8, EventType), 64> = Channel::new();
 
 #[embassy_executor::task]
 async fn sw1_run(mut sw1_key: Input<'static, GpioPin<7>>) {
     loop {
         sw1_key.wait_for_falling_edge().await;
-        key_detection::<GpioPin<7>>(&sw1_key, |event_type| {
+        key_detection(&sw1_key, move |event_type| {
             println!("event_type:{:?}", event_type);
-        })
-        .await;
-    }
-}
-#[embassy_executor::task]
-async fn sw2_run(mut sw2_key: Input<'static, GpioPin<6>>) {
-    loop {
-        sw2_key.wait_for_falling_edge().await;
-        key_detection::<GpioPin<6>>(&sw2_key, |event_type| {
-            println!("event_type:{:?}", event_type);
+            CHANNEL.try_send((7, event_type)).ok();
         })
         .await;
     }
 }
 
+#[embassy_executor::task]
+async fn sw2_run(mut sw2_key: Input<'static, GpioPin<6>>) {
+    loop {
+        sw2_key.wait_for_falling_edge().await;
+        key_detection(&sw2_key, |event_type| {
+            println!("event_type:{:?}", event_type);
+            CHANNEL.try_send((6, event_type)).ok();
+        })
+        .await;
+    }
+}
+
+#[embassy_executor::task]
+async fn display_run(i2c: I2C<'static, I2C0, Blocking>) {
+    let mut display: GraphicsMode<_> = Builder::new()
+        .with_size(DisplaySize::Display128x64NoOffset)
+        .with_i2c_addr(0x3c)
+        .with_rotation(DisplayRotation::Rotate0)
+        .connect_i2c(i2c)
+        .into();
+
+    display.init().unwrap();
+
+    display.flush().unwrap();
+
+    let text_style = MonoTextStyleBuilder::new()
+        .font(&FONT_6X10)
+        .text_color(BinaryColor::On)
+        .build();
+
+    display.clear();
+    loop {
+        let msg = CHANNEL.receive().await;
+        Text::with_baseline(
+            format!("gpio{},{:?}", msg.0, msg.1).as_str(),
+            Point::new(0, 19),
+            text_style,
+            Baseline::Top,
+        )
+        .draw(&mut display)
+        .unwrap();
+
+        display.flush().unwrap();
+        display.clear();
+    }
+}
+
 #[main]
 async fn main(spawner: Spawner) {
+    alloc();
     esp_println::logger::init_logger_from_env();
     let peripherals = Peripherals::take();
     let system = SystemControl::new(peripherals.SYSTEM);
@@ -48,10 +106,35 @@ async fn main(spawner: Spawner) {
     esp_hal_embassy::init(&clocks, timers_ref);
 
     let io = Io::new(peripherals.GPIO, peripherals.IO_MUX);
+    // keys
     let sw1_key = Input::new(io.pins.gpio7, Pull::Up);
     let sw2_key = Input::new(io.pins.gpio6, Pull::Up);
+    // ssd1306 display
+    let scl = io.pins.gpio2;
+    let sda = io.pins.gpio3;
+    let i2c = I2C::new(peripherals.I2C0, sda, scl, 400.kHz(), &clocks, None);
 
+    spawner.spawn(display_run(i2c)).ok();
     spawner.spawn(sw1_run(sw1_key)).ok();
     spawner.spawn(sw2_run(sw2_key)).ok();
-    println!("Start!");
+    let mut count = 0;
+    loop {
+        println!("count: {}", count);
+        count += 1;
+        Timer::after(Duration::from_millis(1000)).await;
+    }
+}
+
+fn alloc() {
+    // -------- Setup Allocator --------
+    const HEAP_SIZE: usize = 1024;
+    static mut HEAP: [u8; HEAP_SIZE] = [0; HEAP_SIZE];
+    #[global_allocator]
+    static ALLOCATOR: embedded_alloc::Heap = embedded_alloc::Heap::empty();
+    unsafe {
+        ALLOCATOR.init(
+            &mut HEAP as *const u8 as usize,
+            core::mem::size_of_val(&HEAP),
+        )
+    };
 }

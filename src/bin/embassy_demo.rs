@@ -3,6 +3,7 @@
 
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
+#[allow(unused)]
 use esp_backtrace as _;
 use esp_hal::timer::timg::TimerGroup;
 use esp_hal::timer::{ErasedTimer, OneShotTimer};

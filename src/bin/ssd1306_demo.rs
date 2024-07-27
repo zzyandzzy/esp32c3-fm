@@ -10,11 +10,12 @@ use embedded_graphics::{
     prelude::*,
     text::{Baseline, Text},
 };
+#[allow(unused)]
 use esp_backtrace as _;
-use esp_hal::i2c::I2C;
-use esp_hal::{clock::ClockControl, delay::Delay, peripherals::Peripherals, prelude::*};
 use esp_hal::gpio::Io;
+use esp_hal::i2c::I2C;
 use esp_hal::system::SystemControl;
+use esp_hal::{clock::ClockControl, delay::Delay, peripherals::Peripherals, prelude::*};
 use esp_println::println;
 use ssd1306_i2c::{prelude::*, Builder};
 
@@ -25,9 +26,9 @@ fn main() -> ! {
     let clocks = ClockControl::boot_defaults(system.clock_control).freeze();
     let delay = Delay::new(&clocks);
     let io = Io::new(peripherals.GPIO, peripherals.IO_MUX);
-    let slc = io.pins.gpio2;
+    let scl = io.pins.gpio2;
     let sda = io.pins.gpio3;
-    let i2c = I2C::new(peripherals.I2C0, sda, slc, 100.kHz(), &clocks, None);
+    let i2c = I2C::new(peripherals.I2C0, sda, scl, 100.kHz(), &clocks, None);
 
     let mut display: GraphicsMode<_> = Builder::new()
         .with_size(DisplaySize::Display128x64NoOffset)
@@ -63,8 +64,8 @@ fn main() -> ! {
         text_style_bold,
         Baseline::Top,
     )
-        .draw(&mut display)
-        .unwrap();
+    .draw(&mut display)
+    .unwrap();
     println!("displaying Hello Rust! on LCD");
     Text::with_baseline("SSD1306-I2C", Point::new(0, 19), text_style, Baseline::Top)
         .draw(&mut display)

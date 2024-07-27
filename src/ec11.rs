@@ -146,7 +146,7 @@ pub async fn task(
                 }
             }
             Either::Second(_) => {
-                key_detection::<GpioPin<1>>(&mut push_key, |event_type| {
+                key_detection(&mut push_key, |event_type| {
                     println!("event_type:{:?}", event_type);
                 })
                 .await;

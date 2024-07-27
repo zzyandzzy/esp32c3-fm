@@ -3,6 +3,7 @@
 
 use embassy_executor::Spawner;
 use esp32c3_fm::ec11;
+#[allow(unused)]
 use esp_backtrace as _;
 use esp_hal::gpio::{Input, Io, Pull};
 use esp_hal::timer::timg::TimerGroup;
