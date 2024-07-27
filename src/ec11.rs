@@ -2,8 +2,7 @@ use embassy_futures::select::{select, Either};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::mutex::Mutex;
 use embassy_time::Instant;
-use esp_hal::gpio::{GpioPin, Input};
-use esp_println::println;
+use esp_hal::gpio::{Input, InputPin};
 
 use crate::ec11::WheelDirection::{Back, Front, NoState};
 use crate::event::{key_detection, EventType};
@@ -31,7 +30,7 @@ impl RotateState {
         RotateState {
             begin_timestamp: 0,
             last_timestamp: 0,
-            wheel_direction: WheelDirection::NoState,
+            wheel_direction: NoState,
             steps: 0,
         }
     }
@@ -56,10 +55,10 @@ impl RotateState {
         if self.steps > 3 {
             let speed =
                 self.steps as f32 / (self.last_timestamp - self.begin_timestamp) as f32 * 1000.0;
-            println!("begin_time:{:?}", self.begin_timestamp);
-            println!("last_time:{:?}", self.last_timestamp);
-            println!("steps:{:?}", self.steps);
-            println!("speed:{:?}", speed);
+            // println!("begin_time:{:?}", self.begin_timestamp);
+            // println!("last_time:{:?}", self.last_timestamp);
+            // println!("steps:{:?}", self.steps);
+            // println!("speed:{:?}", speed);
             return speed;
         } else {
             return self.steps as f32;
@@ -72,12 +71,17 @@ static ROTATE_STATE: Mutex<CriticalSectionRawMutex, RotateState> = Mutex::new(Ro
 const SAMPLE_TIMES: u32 = 10;
 const JUDGE_TIMES: u32 = 8;
 
-#[embassy_executor::task]
-pub async fn task(
-    mut a_point: Input<'static, GpioPin<4>>,
-    b_point: Input<'static, GpioPin<5>>,
-    mut push_key: Input<'static, GpioPin<1>>,
-) {
+pub async fn ec11_detection<P1, P2, P3, F>(
+    a_point: &mut Input<'static, P1>,
+    b_point: &mut Input<'static, P2>,
+    push_key: &mut Input<'static, P3>,
+    mut callback: F,
+) where
+    P1: InputPin,
+    P2: InputPin,
+    P3: InputPin,
+    F: FnMut(EventType, f32) -> (),
+{
     // 初始化编码器状态
     let mut begin_state = NoState;
 
@@ -131,25 +135,21 @@ pub async fn task(
                         if begin_state == Front {
                             let mut rotate_state = ROTATE_STATE.lock().await;
                             rotate_state.do_step(Front);
-                            rotate_state.speed();
-                            println!("front");
+                            callback(EventType::EC11Front, rotate_state.speed());
                         }
                     } else if b_is_down {
                         if begin_state == Back {
                             let mut rotate_state = ROTATE_STATE.lock().await;
                             rotate_state.do_step(Back);
                             rotate_state.speed();
-                            println!("back");
+                            callback(EventType::EC11Back, rotate_state.speed());
                         }
                     }
                     begin_state = NoState;
                 }
             }
             Either::Second(_) => {
-                key_detection(&mut push_key, |event_type| {
-                    println!("event_type:{:?}", event_type);
-                })
-                .await;
+                key_detection(push_key, |event_type| callback(event_type, 0.0)).await;
             }
         }
     }

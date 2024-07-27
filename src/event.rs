@@ -1,6 +1,5 @@
 use embassy_time::{Duration, Instant, Timer};
 use esp_hal::gpio::{Input, InputPin};
-use esp_println::println;
 
 #[derive(Eq, PartialEq, Debug)]
 pub enum EventType {
@@ -8,10 +7,8 @@ pub enum EventType {
     KeyLongStart,
     KeyLongIng,
     KeyLongEnd,
-}
-
-pub async fn toggle_event(event_type: EventType, ms: u64) {
-    println!("event_type:{:?} {}", event_type, ms);
+    EC11Front,
+    EC11Back,
 }
 
 pub async fn key_detection<P, F>(key: &Input<'static, P>, mut callback: F)
