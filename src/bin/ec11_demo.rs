@@ -26,7 +26,7 @@ async fn ec11_run(
         &mut ec11_b,
         &mut ec11_key,
         |event_type, speed| {
-            println!("evevt type: {:?}, speed: {}", event_type, speed);
+            println!("event type: {:?}, speed: {}", event_type, speed);
         },
     )
     .await;

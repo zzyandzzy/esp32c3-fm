@@ -67,6 +67,7 @@ async fn display_run(i2c: I2C<'static, I2C0, Blocking>) {
     display.init().unwrap();
 
     display.flush().unwrap();
+    display.clear(BinaryColor::Off).unwrap();
 
     let text_style = MonoTextStyleBuilder::new()
         .font(&FONT_6X10)
@@ -125,7 +126,7 @@ async fn main(spawner: Spawner) {
 
 fn alloc() {
     // -------- Setup Allocator --------
-    const HEAP_SIZE: usize = 128;
+    const HEAP_SIZE: usize = 60 * 1024;
     static mut HEAP: [u8; HEAP_SIZE] = [0; HEAP_SIZE];
     #[global_allocator]
     static ALLOCATOR: embedded_alloc::Heap = embedded_alloc::Heap::empty();

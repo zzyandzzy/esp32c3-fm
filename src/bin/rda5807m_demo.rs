@@ -28,16 +28,35 @@ use esp_hal::{
 };
 use esp_println::println;
 use rda5807m::{Address, Rda5708m};
-use shared_bus::BusManagerSimple;
-use ssd1306::mode::DisplayConfig;
-use ssd1306::prelude::{DisplayRotation, DisplaySize128x64};
+use shared_bus::{BusManagerSimple, I2cProxy, NullMutex};
+use ssd1306::mode::{BufferedGraphicsMode, DisplayConfig};
+use ssd1306::prelude::{DisplayRotation, DisplaySize128x64, I2CInterface};
 use ssd1306::{I2CDisplayInterface, Ssd1306};
 use static_cell::StaticCell;
 
+use esp32c3_fm::ec11::ec11_detection;
 use esp32c3_fm::event::{key_detection, EventType};
 
 static ONE_SHOT_TIMER: StaticCell<[OneShotTimer<ErasedTimer>; 1]> = StaticCell::new();
 static CHANNEL: Channel<CriticalSectionRawMutex, (u8, EventType), 64> = Channel::new();
+
+#[embassy_executor::task]
+async fn ec11_run(
+    mut ec11_a: Input<'static, GpioPin<4>>,
+    mut ec11_b: Input<'static, GpioPin<5>>,
+    mut ec11_key: Input<'static, GpioPin<1>>,
+) {
+    ec11_detection(
+        &mut ec11_a,
+        &mut ec11_b,
+        &mut ec11_key,
+        |event_type, speed| {
+            println!("event type: {:?}, speed: {}", event_type, speed);
+            CHANNEL.try_send((1, event_type)).ok();
+        },
+    )
+    .await;
+}
 
 #[embassy_executor::task]
 async fn sw1_run(mut sw1_key: Input<'static, GpioPin<7>>) {
@@ -63,19 +82,38 @@ async fn sw2_run(mut sw2_key: Input<'static, GpioPin<6>>) {
     }
 }
 
+fn draw_text(
+    display: &mut Ssd1306<
+        I2CInterface<I2cProxy<NullMutex<I2C<'static, I2C0, Blocking>>>>,
+        DisplaySize128x64,
+        BufferedGraphicsMode<DisplaySize128x64>,
+    >,
+    text: &str,
+) {
+    let text_style = MonoTextStyleBuilder::new()
+        .font(&FONT_6X10)
+        .text_color(BinaryColor::On)
+        .build();
+    Text::with_baseline(text, Point::new(0, 19), text_style, Baseline::Top)
+        .draw(display)
+        .unwrap();
+    display.flush().unwrap();
+    display.clear(BinaryColor::Off).unwrap();
+}
+
 #[embassy_executor::task]
 async fn display_run(i2c: I2C<'static, I2C0, Blocking>) {
     let i2c_bus_manager = BusManagerSimple::new(i2c);
     // rda5807m
-    // let mut rda5807m = Rda5708m::new(i2c_bus_manager.acquire_i2c(), Address::default());
-    // match rda5807m.start() {
-    //     Ok(_) => {
-    //         println!("start rda5807m success!");
-    //     }
-    //     Err(e) => {
-    //         println!("start rda5807m err, {:?}", e);
-    //     }
-    // }
+    let mut rda5807m = Rda5708m::new(i2c_bus_manager.acquire_i2c(), Address::default());
+    match rda5807m.start() {
+        Ok(_) => {
+            println!("start rda5807m success!");
+        }
+        Err(e) => {
+            println!("start rda5807m err, {:?}", e);
+        }
+    }
 
     // ssd1306 display
     let interface = I2CDisplayInterface::new(i2c_bus_manager.acquire_i2c());
@@ -83,43 +121,25 @@ async fn display_run(i2c: I2C<'static, I2C0, Blocking>) {
         .into_buffered_graphics_mode();
     display.init().unwrap();
     display.flush().unwrap();
+    display.clear(BinaryColor::Off).unwrap();
 
-    let text_style = MonoTextStyleBuilder::new()
-        .font(&FONT_6X10)
-        .text_color(BinaryColor::On)
-        .build();
     loop {
         let msg = CHANNEL.receive().await;
         match msg {
             (7, EventType::KeyShort) => {
                 // pre
                 // rda5807m.seek_up(true).unwrap();
-                Text::with_baseline(
-                    format!("gpio{},{:?}", msg.0, msg.1).as_str(),
-                    Point::new(0, 19),
-                    text_style,
-                    Baseline::Top,
-                )
-                .draw(&mut display)
-                .unwrap();
-
-                display.flush().unwrap();
-                display.clear(BinaryColor::Off).unwrap();
+                draw_text(&mut display, format!("gpio{},{:?}", msg.0, msg.1).as_str());
             }
             (6, EventType::KeyShort) => {
                 // next
                 // rda5807m.seek_down(true).unwrap();
-                Text::with_baseline(
-                    format!("gpio{},{:?}", msg.0, msg.1).as_str(),
-                    Point::new(0, 19),
-                    text_style,
-                    Baseline::Top,
-                )
-                .draw(&mut display)
-                .unwrap();
-
-                display.flush().unwrap();
-                // display.clear(BinaryColor::Off).unwrap();
+                draw_text(&mut display, format!("gpio{},{:?}", msg.0, msg.1).as_str());
+            }
+            (1, _) => {
+                // next
+                // rda5807m.seek_down(true).unwrap();
+                draw_text(&mut display, format!("gpio{},{:?}", msg.0, msg.1).as_str());
             }
             (sw, event_type) => {
                 panic!("sw: {}, event type: {:?}", sw, event_type);
@@ -131,7 +151,7 @@ async fn display_run(i2c: I2C<'static, I2C0, Blocking>) {
 #[main]
 async fn main(spawner: Spawner) {
     alloc();
-    // esp_println::logger::init_logger_from_env();
+    esp_println::logger::init_logger_from_env();
 
     let peripherals = Peripherals::take();
     let system = SystemControl::new(peripherals.SYSTEM);
@@ -149,6 +169,11 @@ async fn main(spawner: Spawner) {
     // keys
     let sw1_key = Input::new(io.pins.gpio7, Pull::Up);
     let sw2_key = Input::new(io.pins.gpio6, Pull::Up);
+    // ec11
+    let ec11_a = Input::new(io.pins.gpio4, Pull::Up);
+    let ec11_b = Input::new(io.pins.gpio5, Pull::Up);
+    let ec11_key = Input::new(io.pins.gpio1, Pull::Up);
+
     // i2c
     let scl = io.pins.gpio2;
     let sda = io.pins.gpio3;
@@ -157,6 +182,7 @@ async fn main(spawner: Spawner) {
     spawner.spawn(display_run(i2c)).ok();
     spawner.spawn(sw1_run(sw1_key)).ok();
     spawner.spawn(sw2_run(sw2_key)).ok();
+    spawner.spawn(ec11_run(ec11_a, ec11_b, ec11_key)).ok();
 
     loop {
         println!("Main");
@@ -166,7 +192,7 @@ async fn main(spawner: Spawner) {
 
 fn alloc() {
     // -------- Setup Allocator --------
-    const HEAP_SIZE: usize = 128;
+    const HEAP_SIZE: usize = 60 * 1024;
     static mut HEAP: [u8; HEAP_SIZE] = [0; HEAP_SIZE];
     #[global_allocator]
     static ALLOCATOR: embedded_alloc::Heap = embedded_alloc::Heap::empty();
