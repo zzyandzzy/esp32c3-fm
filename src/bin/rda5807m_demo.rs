@@ -96,9 +96,9 @@ fn draw_text(
         .build();
     Text::with_baseline(text, Point::new(0, 19), text_style, Baseline::Top)
         .draw(display)
-        .unwrap();
-    display.flush().unwrap();
-    display.clear(BinaryColor::Off).unwrap();
+        .expect("draw text fail");
+    display.flush().expect("flush display fail");
+    display.clear(BinaryColor::Off).expect("clear display fail");
 }
 
 #[embassy_executor::task]
@@ -119,31 +119,55 @@ async fn display_run(i2c: I2C<'static, I2C0, Blocking>) {
     let interface = I2CDisplayInterface::new(i2c_bus_manager.acquire_i2c());
     let mut display = Ssd1306::new(interface, DisplaySize128x64, DisplayRotation::Rotate0)
         .into_buffered_graphics_mode();
-    display.init().unwrap();
-    display.flush().unwrap();
-    display.clear(BinaryColor::Off).unwrap();
-
+    display.init().expect("init display fail");
+    display.flush().expect("flush display fail");
+    display.clear(BinaryColor::Off).expect("clear display fail");
     loop {
         let msg = CHANNEL.receive().await;
         match msg {
             (7, EventType::KeyShort) => {
                 // pre
-                // rda5807m.seek_up(true).unwrap();
-                draw_text(&mut display, format!("gpio{},{:?}", msg.0, msg.1).as_str());
+                match rda5807m.seek_up(true) {
+                    Ok(_) => {
+                        println!("seek up success!");
+                    }
+                    Err(e) => {
+                        println!("seek up err, {:?}", e);
+                    }
+                }
             }
             (6, EventType::KeyShort) => {
                 // next
-                // rda5807m.seek_down(true).unwrap();
-                draw_text(&mut display, format!("gpio{},{:?}", msg.0, msg.1).as_str());
+                match rda5807m.seek_down(true) {
+                    Ok(_) => {
+                        println!("seek down success!");
+                    }
+                    Err(e) => {
+                        println!("seek down err, {:?}", e);
+                    }
+                }
             }
-            (1, _) => {
-                // next
-                // rda5807m.seek_down(true).unwrap();
-                draw_text(&mut display, format!("gpio{},{:?}", msg.0, msg.1).as_str());
+            (1, EventType::KeyShort) => {
+                let freq = rda5807m.get_frequency().unwrap_or(0);
+                draw_text(&mut display, format!("freq: {}", freq).as_str());
             }
-            (sw, event_type) => {
-                panic!("sw: {}, event type: {:?}", sw, event_type);
-            }
+            (1, EventType::EC11Front) => match rda5807m.volume_up() {
+                Ok(_) => {
+                    println!("volume up success!");
+                }
+                Err(e) => {
+                    println!("volume up err, {:?}", e);
+                }
+            },
+            (1, EventType::EC11Back) => match rda5807m.volume_down() {
+                Ok(_) => {
+                    println!("volume down success!");
+                }
+                Err(e) => {
+                    println!("volume down err, {:?}", e);
+                }
+            },
+            (_io, _event_type) => {}
         }
     }
 }
@@ -185,7 +209,6 @@ async fn main(spawner: Spawner) {
     spawner.spawn(ec11_run(ec11_a, ec11_b, ec11_key)).ok();
 
     loop {
-        println!("Main");
         Timer::after(Duration::from_millis(5_000)).await;
     }
 }
