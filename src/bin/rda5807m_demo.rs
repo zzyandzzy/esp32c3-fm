@@ -1,5 +1,6 @@
 #![no_std]
 #![no_main]
+
 extern crate alloc;
 
 use alloc::format;
@@ -8,10 +9,11 @@ use embassy_executor::Spawner;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_time::{Duration, Timer};
+use embedded_graphics::draw_target::DrawTarget;
+use embedded_graphics::geometry::Point;
 use embedded_graphics::mono_font::ascii::FONT_6X10;
 use embedded_graphics::mono_font::MonoTextStyleBuilder;
 use embedded_graphics::pixelcolor::BinaryColor;
-use embedded_graphics::prelude::{DrawTarget, Point};
 use embedded_graphics::text::{Baseline, Text};
 use embedded_graphics::Drawable;
 #[allow(unused)]
@@ -25,6 +27,8 @@ use esp_hal::{
     clock::ClockControl, peripherals::Peripherals, prelude::*, system::SystemControl, Blocking,
 };
 use esp_println::println;
+use rda5807m::{Address, Rda5708m};
+use shared_bus::BusManagerSimple;
 use ssd1306::mode::DisplayConfig;
 use ssd1306::prelude::{DisplayRotation, DisplaySize128x64};
 use ssd1306::{I2CDisplayInterface, Ssd1306};
@@ -61,38 +65,74 @@ async fn sw2_run(mut sw2_key: Input<'static, GpioPin<6>>) {
 
 #[embassy_executor::task]
 async fn display_run(i2c: I2C<'static, I2C0, Blocking>) {
-    let interface = I2CDisplayInterface::new(i2c);
+    let i2c_bus_manager = BusManagerSimple::new(i2c);
+    // rda5807m
+    // let mut rda5807m = Rda5708m::new(i2c_bus_manager.acquire_i2c(), Address::default());
+    // match rda5807m.start() {
+    //     Ok(_) => {
+    //         println!("start rda5807m success!");
+    //     }
+    //     Err(e) => {
+    //         println!("start rda5807m err, {:?}", e);
+    //     }
+    // }
+
+    // ssd1306 display
+    let interface = I2CDisplayInterface::new(i2c_bus_manager.acquire_i2c());
     let mut display = Ssd1306::new(interface, DisplaySize128x64, DisplayRotation::Rotate0)
         .into_buffered_graphics_mode();
     display.init().unwrap();
-
     display.flush().unwrap();
 
     let text_style = MonoTextStyleBuilder::new()
         .font(&FONT_6X10)
         .text_color(BinaryColor::On)
         .build();
-
     loop {
         let msg = CHANNEL.receive().await;
-        Text::with_baseline(
-            format!("gpio{},{:?}", msg.0, msg.1).as_str(),
-            Point::new(0, 19),
-            text_style,
-            Baseline::Top,
-        )
-        .draw(&mut display)
-        .unwrap();
+        match msg {
+            (7, EventType::KeyShort) => {
+                // pre
+                // rda5807m.seek_up(true).unwrap();
+                Text::with_baseline(
+                    format!("gpio{},{:?}", msg.0, msg.1).as_str(),
+                    Point::new(0, 19),
+                    text_style,
+                    Baseline::Top,
+                )
+                .draw(&mut display)
+                .unwrap();
 
-        display.flush().unwrap();
-        display.clear(BinaryColor::Off).unwrap();
+                display.flush().unwrap();
+                display.clear(BinaryColor::Off).unwrap();
+            }
+            (6, EventType::KeyShort) => {
+                // next
+                // rda5807m.seek_down(true).unwrap();
+                Text::with_baseline(
+                    format!("gpio{},{:?}", msg.0, msg.1).as_str(),
+                    Point::new(0, 19),
+                    text_style,
+                    Baseline::Top,
+                )
+                .draw(&mut display)
+                .unwrap();
+
+                display.flush().unwrap();
+                // display.clear(BinaryColor::Off).unwrap();
+            }
+            (sw, event_type) => {
+                panic!("sw: {}, event type: {:?}", sw, event_type);
+            }
+        }
     }
 }
 
 #[main]
 async fn main(spawner: Spawner) {
     alloc();
-    esp_println::logger::init_logger_from_env();
+    // esp_println::logger::init_logger_from_env();
+
     let peripherals = Peripherals::take();
     let system = SystemControl::new(peripherals.SYSTEM);
     let clocks = ClockControl::boot_defaults(system.clock_control).freeze();
@@ -101,25 +141,26 @@ async fn main(spawner: Spawner) {
     let timer_group = TimerGroup::new(peripherals.TIMG0, &clocks, None);
     let one_shot_timer = OneShotTimer::new(timer_group.timer0.into());
     let timers_ref = ONE_SHOT_TIMER.init([one_shot_timer]);
-    esp_hal_embassy::init(&clocks, timers_ref);
 
+    esp_hal_embassy::init(&clocks, timers_ref);
+    println!("Start!");
     let io = Io::new(peripherals.GPIO, peripherals.IO_MUX);
+
     // keys
     let sw1_key = Input::new(io.pins.gpio7, Pull::Up);
     let sw2_key = Input::new(io.pins.gpio6, Pull::Up);
-    // ssd1306 display
+    // i2c
     let scl = io.pins.gpio2;
     let sda = io.pins.gpio3;
     let i2c = I2C::new(peripherals.I2C0, sda, scl, 400.kHz(), &clocks, None);
-
+    // start
     spawner.spawn(display_run(i2c)).ok();
     spawner.spawn(sw1_run(sw1_key)).ok();
     spawner.spawn(sw2_run(sw2_key)).ok();
-    let mut count = 0;
+
     loop {
-        println!("count: {}", count);
-        count += 1;
-        Timer::after(Duration::from_millis(1000)).await;
+        println!("Main");
+        Timer::after(Duration::from_millis(5_000)).await;
     }
 }
 

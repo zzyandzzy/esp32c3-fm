@@ -17,7 +17,9 @@ use esp_hal::i2c::I2C;
 use esp_hal::system::SystemControl;
 use esp_hal::{clock::ClockControl, delay::Delay, peripherals::Peripherals, prelude::*};
 use esp_println::println;
-use ssd1306_i2c::{prelude::*, Builder};
+use ssd1306::mode::DisplayConfig;
+use ssd1306::prelude::{DisplayRotation, DisplaySize128x64};
+use ssd1306::{I2CDisplayInterface, Ssd1306};
 
 #[entry]
 fn main() -> ! {
@@ -30,19 +32,15 @@ fn main() -> ! {
     let sda = io.pins.gpio3;
     let i2c = I2C::new(peripherals.I2C0, sda, scl, 100.kHz(), &clocks, None);
 
-    let mut display: GraphicsMode<_> = Builder::new()
-        .with_size(DisplaySize::Display128x64NoOffset)
-        .with_i2c_addr(0x3c)
-        .with_rotation(DisplayRotation::Rotate0)
-        .connect_i2c(i2c)
-        .into();
-    println!("calling display.init()");
-
+    let interface = I2CDisplayInterface::new(i2c);
+    let mut display = Ssd1306::new(interface, DisplaySize128x64, DisplayRotation::Rotate0)
+        .into_buffered_graphics_mode();
     display.init().unwrap();
+    println!("calling display.init()");
 
     display.flush().unwrap();
 
-    display.clear();
+    display.clear(BinaryColor::Off).unwrap();
 
     //********* display some text
 
@@ -75,7 +73,7 @@ fn main() -> ! {
 
     // graphics
     delay.delay_millis(2000);
-    display.clear();
+    display.clear(BinaryColor::Off).unwrap();
 
     Line::new(Point::new(8, 16 + 16), Point::new(8 + 16, 16 + 16))
         .into_styled(PrimitiveStyle::with_stroke(BinaryColor::On, 1))
@@ -106,37 +104,37 @@ fn main() -> ! {
 
     // pixel square
     delay.delay_millis(2000);
-    display.clear();
+    display.clear(BinaryColor::Off).unwrap();
 
     // Top side
-    display.set_pixel(0, 0, 1);
-    display.set_pixel(1, 0, 1);
-    display.set_pixel(2, 0, 1);
-    display.set_pixel(3, 0, 1);
+    display.set_pixel(0, 0, true);
+    display.set_pixel(1, 0, true);
+    display.set_pixel(2, 0, true);
+    display.set_pixel(3, 0, true);
 
     // Right side
-    display.set_pixel(3, 0, 1);
-    display.set_pixel(3, 1, 1);
-    display.set_pixel(3, 2, 1);
-    display.set_pixel(3, 3, 1);
+    display.set_pixel(3, 0, true);
+    display.set_pixel(3, 1, true);
+    display.set_pixel(3, 2, true);
+    display.set_pixel(3, 3, true);
 
     // Bottom side
-    display.set_pixel(0, 3, 1);
-    display.set_pixel(1, 3, 1);
-    display.set_pixel(2, 3, 1);
-    display.set_pixel(3, 3, 1);
+    display.set_pixel(0, 3, true);
+    display.set_pixel(1, 3, true);
+    display.set_pixel(2, 3, true);
+    display.set_pixel(3, 3, true);
 
     // Left side
-    display.set_pixel(0, 0, 1);
-    display.set_pixel(0, 1, 1);
-    display.set_pixel(0, 2, 1);
-    display.set_pixel(0, 3, 1);
+    display.set_pixel(0, 0, true);
+    display.set_pixel(0, 1, true);
+    display.set_pixel(0, 2, true);
+    display.set_pixel(0, 3, true);
 
     display.flush().unwrap();
 
     // image
     delay.delay_millis(2000);
-    display.clear();
+    display.clear(BinaryColor::Off).unwrap();
     let im: ImageRawLE<BinaryColor> = ImageRawLE::new(include_bytes!("./rust.raw"), 64);
 
     Image::new(&im, Point::new(32, 0))
