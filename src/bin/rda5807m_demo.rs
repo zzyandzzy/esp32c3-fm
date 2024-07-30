@@ -27,6 +27,7 @@ use esp_hal::{
     clock::ClockControl, peripherals::Peripherals, prelude::*, system::SystemControl, Blocking,
 };
 use esp_println::println;
+use rda5807m::register_address::StatusRegister;
 use rda5807m::{Address, Rda5708m};
 use shared_bus::{BusManagerSimple, I2cProxy, NullMutex};
 use ssd1306::mode::{BufferedGraphicsMode, DisplayConfig};
@@ -101,6 +102,52 @@ fn draw_text(
     display.clear(BinaryColor::Off).expect("clear display fail");
 }
 
+fn refresh_display(
+    rda5807m: &mut Rda5708m<I2cProxy<NullMutex<I2C<'static, I2C0, Blocking>>>>,
+    display: &mut Ssd1306<
+        I2CInterface<I2cProxy<NullMutex<I2C<'static, I2C0, Blocking>>>>,
+        DisplaySize128x64,
+        BufferedGraphicsMode<DisplaySize128x64>,
+    >,
+) {
+    let status = rda5807m.get_status().unwrap_or(Default::default());
+    refresh_display_status(rda5807m, display, status)
+}
+
+fn refresh_display_status(
+    rda5807m: &mut Rda5708m<I2cProxy<NullMutex<I2C<'static, I2C0, Blocking>>>>,
+    display: &mut Ssd1306<
+        I2CInterface<I2cProxy<NullMutex<I2C<'static, I2C0, Blocking>>>>,
+        DisplaySize128x64,
+        BufferedGraphicsMode<DisplaySize128x64>,
+    >,
+    status: StatusRegister,
+) {
+    let freq = rda5807m.get_frequency().unwrap_or(Default::default());
+    let rssi = rda5807m.get_rssi().unwrap_or(Default::default());
+    let volume = rda5807m.get_volume().unwrap_or(Default::default());
+    println!(
+        "freq:{}, rssi:{}, volume:{:?}, status:{:?}",
+        freq, rssi, volume, status
+    );
+    // 如果值是true，显示为1，false显示为0
+    let text = format!(
+        "f:{},r:{}\nrdsr:{},stc:{}\nsf:{},rdss:{}\nblk_e:{},st:{}\nv:{},sth:{},ch:{}",
+        freq,
+        rssi,
+        status.rdss as u8,
+        status.stc as u8,
+        status.sf as u8,
+        status.rdss as u8,
+        status.blk_e as u8,
+        status.st as u8,
+        volume.volume,
+        volume.seek_th,
+        status.readchan
+    );
+    draw_text(display, text.as_str());
+}
+
 #[embassy_executor::task]
 async fn display_run(i2c: I2C<'static, I2C0, Blocking>) {
     let i2c_bus_manager = BusManagerSimple::new(i2c);
@@ -122,7 +169,9 @@ async fn display_run(i2c: I2C<'static, I2C0, Blocking>) {
     display.init().expect("init display fail");
     display.flush().expect("flush display fail");
     display.clear(BinaryColor::Off).expect("clear display fail");
-    let mut threshold = 8;
+
+    let mut threshold = rda5807m.get_volume().unwrap_or(Default::default()).seek_th;
+    refresh_display(&mut rda5807m, &mut display);
     loop {
         let msg = CHANNEL.receive().await;
         match msg {
@@ -130,8 +179,17 @@ async fn display_run(i2c: I2C<'static, I2C0, Blocking>) {
                 // pre
                 match rda5807m.seek_up(true) {
                     Ok(_) => {
+                        Timer::after(Duration::from_millis(1_00)).await;
+                        loop {
+                            let status = rda5807m.get_status().unwrap_or(Default::default());
+                            if status.stc {
+                                break;
+                            }
+                            refresh_display_status(&mut rda5807m, &mut display, status);
+                            Timer::after(Duration::from_millis(1_000)).await;
+                        }
                         println!("seek up success!");
-                        draw_text(&mut display, "seek up!");
+                        refresh_display(&mut rda5807m, &mut display);
                     }
                     Err(e) => {
                         println!("seek up err, {:?}", e);
@@ -144,7 +202,7 @@ async fn display_run(i2c: I2C<'static, I2C0, Blocking>) {
                 match rda5807m.set_seek_threshold(threshold) {
                     Ok(_) => {
                         println!("set seek threshold success!");
-                        draw_text(&mut display, "seek th!");
+                        refresh_display(&mut rda5807m, &mut display);
                     }
                     Err(e) => {
                         println!("set seek threshold err, {:?}", e);
@@ -152,30 +210,13 @@ async fn display_run(i2c: I2C<'static, I2C0, Blocking>) {
                 }
             }
             (1, EventType::KeyShort) => {
-                let freq = rda5807m.get_frequency().unwrap_or(Default::default());
-                let rssi = rda5807m.get_rssi().unwrap_or(Default::default());
-                let volume = rda5807m.get_volume().unwrap_or(Default::default());
-                let status = rda5807m.get_status().unwrap_or(Default::default());
-                let text = format!(
-                    "f:{},r:{}\nrdsr:{},stc:{}\nsf:{},rdss:{}\nblk_e:{},st:{}\nv:{},sth:{},ch:{}",
-                    freq,
-                    rssi,
-                    status.rdss,
-                    status.stc,
-                    status.sf,
-                    status.rdss,
-                    status.blk_e,
-                    status.st,
-                    volume.volume,
-                    volume.seek_th,
-                    status.readchan
-                );
-                println!("{}", text);
-                draw_text(&mut display, text.as_str());
+                // 刷新并显示状态
+                refresh_display(&mut rda5807m, &mut display);
             }
             (1, EventType::EC11Front) => match rda5807m.volume_up() {
                 Ok(_) => {
                     println!("volume up success!");
+                    refresh_display(&mut rda5807m, &mut display);
                 }
                 Err(e) => {
                     println!("volume up err, {:?}", e);
@@ -184,6 +225,7 @@ async fn display_run(i2c: I2C<'static, I2C0, Blocking>) {
             (1, EventType::EC11Back) => match rda5807m.volume_down() {
                 Ok(_) => {
                     println!("volume down success!");
+                    refresh_display(&mut rda5807m, &mut display);
                 }
                 Err(e) => {
                     println!("volume down err, {:?}", e);
