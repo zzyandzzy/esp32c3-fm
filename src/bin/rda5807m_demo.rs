@@ -83,6 +83,18 @@ async fn sw2_run(mut sw2_key: Input<'static, GpioPin<6>>) {
     }
 }
 
+#[embassy_executor::task]
+async fn sw3_run(mut sw3_key: Input<'static, GpioPin<9>>) {
+    loop {
+        sw3_key.wait_for_falling_edge().await;
+        key_detection(&sw3_key, |event_type| {
+            println!("event_type:{:?}", event_type);
+            CHANNEL.try_send((9, event_type)).ok();
+        })
+        .await;
+    }
+}
+
 fn draw_text(
     display: &mut Ssd1306<
         I2CInterface<I2cProxy<NullMutex<I2C<'static, I2C0, Blocking>>>>,
@@ -172,6 +184,7 @@ async fn display_run(i2c: I2C<'static, I2C0, Blocking>) {
 
     let mut threshold = rda5807m.get_volume().unwrap_or(Default::default()).seek_th;
     refresh_display(&mut rda5807m, &mut display);
+    let mut freq = rda5807m.get_frequency().unwrap();
     loop {
         let msg = CHANNEL.receive().await;
         match msg {
@@ -209,20 +222,7 @@ async fn display_run(i2c: I2C<'static, I2C0, Blocking>) {
                     }
                 }
             }
-            (1, EventType::KeyShort) => {
-                // 刷新并显示状态
-                refresh_display(&mut rda5807m, &mut display);
-            }
-            (1, EventType::EC11Front) => match rda5807m.volume_up() {
-                Ok(_) => {
-                    println!("volume up success!");
-                    refresh_display(&mut rda5807m, &mut display);
-                }
-                Err(e) => {
-                    println!("volume up err, {:?}", e);
-                }
-            },
-            (1, EventType::EC11Back) => match rda5807m.volume_down() {
+            (9, EventType::KeyShort) => match rda5807m.volume_down(true) {
                 Ok(_) => {
                     println!("volume down success!");
                     refresh_display(&mut rda5807m, &mut display);
@@ -231,6 +231,44 @@ async fn display_run(i2c: I2C<'static, I2C0, Blocking>) {
                     println!("volume down err, {:?}", e);
                 }
             },
+            (1, EventType::KeyShort) => {
+                // 刷新并显示状态
+                refresh_display(&mut rda5807m, &mut display);
+            }
+            (1, EventType::EC11Front) => {
+                freq = freq + 100;
+                if freq > 118500 {
+                    freq = 87500;
+                }
+                // freq up
+                match rda5807m.set_frequency(freq) {
+                    Ok(_) => {
+                        println!("set frequency success!");
+                        Timer::after(Duration::from_millis(1_0)).await;
+                        refresh_display(&mut rda5807m, &mut display);
+                    }
+                    Err(e) => {
+                        println!("set frequency err, {:?}", e);
+                    }
+                }
+            }
+            (1, EventType::EC11Back) => {
+                freq = freq - 100;
+                if freq < 87500 {
+                    freq = 118500;
+                }
+                // freq up
+                match rda5807m.set_frequency(freq) {
+                    Ok(_) => {
+                        println!("set frequency success!");
+                        Timer::after(Duration::from_millis(1_0)).await;
+                        refresh_display(&mut rda5807m, &mut display);
+                    }
+                    Err(e) => {
+                        println!("set frequency err, {:?}", e);
+                    }
+                }
+            }
             (_io, _event_type) => {}
         }
     }
@@ -258,6 +296,7 @@ async fn main(spawner: Spawner) {
     // keys
     let sw1_key = Input::new(io.pins.gpio7, Pull::Up);
     let sw2_key = Input::new(io.pins.gpio6, Pull::Up);
+    let sw3_key = Input::new(io.pins.gpio9, Pull::Up);
     // ec11
     let ec11_a = Input::new(io.pins.gpio4, Pull::Up);
     let ec11_b = Input::new(io.pins.gpio5, Pull::Up);
@@ -271,6 +310,7 @@ async fn main(spawner: Spawner) {
     spawner.spawn(display_run(i2c)).ok();
     spawner.spawn(sw1_run(sw1_key)).ok();
     spawner.spawn(sw2_run(sw2_key)).ok();
+    spawner.spawn(sw3_run(sw3_key)).ok();
     spawner.spawn(ec11_run(ec11_a, ec11_b, ec11_key)).ok();
 
     loop {
