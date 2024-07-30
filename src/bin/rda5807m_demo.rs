@@ -18,7 +18,7 @@ use embedded_graphics::text::{Baseline, Text};
 use embedded_graphics::Drawable;
 #[allow(unused)]
 use esp_backtrace as _;
-use esp_hal::gpio::{GpioPin, Input, Io, Pull};
+use esp_hal::gpio::{GpioPin, Input, Io, Level, Output, Pull};
 use esp_hal::i2c::I2C;
 use esp_hal::peripherals::I2C0;
 use esp_hal::timer::timg::TimerGroup;
@@ -94,7 +94,7 @@ fn draw_text(
         .font(&FONT_6X10)
         .text_color(BinaryColor::On)
         .build();
-    Text::with_baseline(text, Point::new(0, 19), text_style, Baseline::Top)
+    Text::with_baseline(text, Point::new(0, 0), text_style, Baseline::Top)
         .draw(display)
         .expect("draw text fail");
     display.flush().expect("flush display fail");
@@ -122,6 +122,7 @@ async fn display_run(i2c: I2C<'static, I2C0, Blocking>) {
     display.init().expect("init display fail");
     display.flush().expect("flush display fail");
     display.clear(BinaryColor::Off).expect("clear display fail");
+    let mut threshold = 8;
     loop {
         let msg = CHANNEL.receive().await;
         match msg {
@@ -130,6 +131,7 @@ async fn display_run(i2c: I2C<'static, I2C0, Blocking>) {
                 match rda5807m.seek_up(true) {
                     Ok(_) => {
                         println!("seek up success!");
+                        draw_text(&mut display, "seek up!");
                     }
                     Err(e) => {
                         println!("seek up err, {:?}", e);
@@ -138,18 +140,38 @@ async fn display_run(i2c: I2C<'static, I2C0, Blocking>) {
             }
             (6, EventType::KeyShort) => {
                 // next
-                match rda5807m.seek_down(true) {
+                threshold = threshold - 1;
+                match rda5807m.set_seek_threshold(threshold) {
                     Ok(_) => {
-                        println!("seek down success!");
+                        println!("set seek threshold success!");
+                        draw_text(&mut display, "seek th!");
                     }
                     Err(e) => {
-                        println!("seek down err, {:?}", e);
+                        println!("set seek threshold err, {:?}", e);
                     }
                 }
             }
             (1, EventType::KeyShort) => {
-                let freq = rda5807m.get_frequency().unwrap_or(0);
-                draw_text(&mut display, format!("freq: {}", freq).as_str());
+                let freq = rda5807m.get_frequency().unwrap_or(Default::default());
+                let rssi = rda5807m.get_rssi().unwrap_or(Default::default());
+                let volume = rda5807m.get_volume().unwrap_or(Default::default());
+                let status = rda5807m.get_status().unwrap_or(Default::default());
+                let text = format!(
+                    "f:{},r:{}\nrdsr:{},stc:{}\nsf:{},rdss:{}\nblk_e:{},st:{}\nv:{},sth:{},ch:{}",
+                    freq,
+                    rssi,
+                    status.rdss,
+                    status.stc,
+                    status.sf,
+                    status.rdss,
+                    status.blk_e,
+                    status.st,
+                    volume.volume,
+                    volume.seek_th,
+                    status.readchan
+                );
+                println!("{}", text);
+                draw_text(&mut display, text.as_str());
             }
             (1, EventType::EC11Front) => match rda5807m.volume_up() {
                 Ok(_) => {
@@ -189,7 +211,8 @@ async fn main(spawner: Spawner) {
     esp_hal_embassy::init(&clocks, timers_ref);
     println!("Start!");
     let io = Io::new(peripherals.GPIO, peripherals.IO_MUX);
-
+    let mut spk_sw = Output::new(io.pins.gpio0, Level::Low);
+    spk_sw.set_low();
     // keys
     let sw1_key = Input::new(io.pins.gpio7, Pull::Up);
     let sw2_key = Input::new(io.pins.gpio6, Pull::Up);
