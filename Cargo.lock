@@ -860,6 +860,8 @@ checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
 [[package]]
 name = "rda5807m"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b2ec030702c876c7d6197b1910da0e7ffd13145739bd81157cdfb01e8475b725"
 dependencies = [
  "embedded-hal 0.2.7",
 ]

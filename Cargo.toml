@@ -24,7 +24,7 @@ embedded-alloc = { version = "0.5" }
 shared-bus = { version = "0.3.1" }
 static_cell = "2.1.0"
 # rda5807m
-rda5807m = { version = "0.1.0", path = "../rda5807m" }
+rda5807m = "0.1.0"
 # ssd1360
 ssd1306 = "0.8.4"
 embedded-graphics = "0.8.1"
